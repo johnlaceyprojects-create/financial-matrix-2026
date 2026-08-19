@@ -21,7 +21,7 @@ tickers = {
 
 print("Fetching financial data from Yahoo Finance...")
 try:
-    # Explicitly disable multi-level index layers for a flat data layout
+    # Disable multi-level layers for a completely flat data grid
     asset_data = yf.download(
         tickers=list(tickers.values()), 
         start=start_date, 
@@ -33,27 +33,23 @@ try:
         print("Error: Received an empty data response from the market API.")
         sys.exit(1)
         
-    # Isolate strictly the Closing columns from the flat DataFrame
-    valid_cols = [c for c in asset_data.columns if 'Close' in c or any(t in c for t in tickers.values())]
+    # Standardise column headers to lowercase to avoid case-matching errors
+    asset_data.columns = [str(c).lower() for c in asset_data.columns]
+    
+    # Isolate closing price columns matching our target ticker symbols
+    valid_cols = []
+    for clean_name, symbol in tickers.items():
+        sym_lower = symbol.lower()
+        # Find any column header that contains our ticker symbol string
+        matched_col = next((c for c in asset_data.columns if sym_lower in c), None)
+        if matched_col:
+            asset_data = asset_data.rename(columns={matched_col: clean_name})
+            valid_cols.append(clean_name)
+            
+    # Filter the dataframe to hold only our renamed valid asset classes
     asset_data = asset_data[valid_cols]
     
-    # Strip any text decorators out of the flat column names to isolate pure symbols
-    clean_cols = {}
-    for col in asset_data.columns:
-        # Match symbol inside column headers if yfinance appends text strings
-        found_symbol = next((v for v in tickers.values() if v in col), col)
-        clean_cols[col] = found_symbol
-        
-    asset_data = asset_data.rename(columns=clean_cols)
-    
-    # Map the isolated symbols back to human-readable names
-    inv_tickers = {v: k for k, v in tickers.items()}
-    asset_data = asset_data.rename(columns=inv_tickers)
-    
-    # Drop columns that failed mapping to keep only requested assets
-    asset_data = asset_data[[k for k in tickers.keys() if k in asset_data.columns]]
-    
-    # Forward fill gaps (aligns stock market closures with 24/7 crypto data)
+    # Forward fill gaps (aligns stock market weekend closures with 24/7 crypto)
     asset_data = asset_data.ffill().dropna()
 
     print(f"Successfully processed {len(asset_data)} rows across {len(asset_data.columns)} assets.")
