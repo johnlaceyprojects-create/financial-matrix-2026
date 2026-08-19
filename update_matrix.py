@@ -22,11 +22,12 @@ tickers = {
 print("Fetching financial data sequentially to guarantee a single-level dataframe...")
 price_series = {}
 
-# Download assets individually to block MultiIndex column grouping entirely
+# Download assets individually to prevent MultiIndex structural issues entirely
 for label, symbol in tickers.items():
     try:
         print(f"Downloading {label} ({symbol})...")
-        single_data = yf.download(symbol, start=start_date, end=end_date, verbose=False)
+        # Removed the incorrect 'verbose' parameter here
+        single_data = yf.download(symbol, start=start_date, end=end_date)
         
         if not single_data.empty:
             # Safely capture the Close price series as a flat array
