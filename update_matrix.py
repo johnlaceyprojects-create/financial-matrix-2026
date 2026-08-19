@@ -55,6 +55,11 @@ returns_df = asset_data.pct_change().dropna()
 # 3. Generate 60-Day Rolling Correlation Matrix
 correlation_matrix = returns_df.tail(60).corr().fillna(0)
 
+# Convert metadata safely into standard clean Python arrays for JavaScript injection
+matrix_values = correlation_matrix.values.tolist()
+clean_columns = list(correlation_matrix.columns.tolist())
+clean_rows = list(correlation_matrix.index.tolist())
+
 # 4. Build HTML Visual Matrix Page
 html_content = f"""
 <!DOCTYPE html>
@@ -80,9 +85,9 @@ html_content = f"""
 
     <script>
         var data = [{{
-            z: {correlation_matrix.values.tolist()},
-            x: {list(correlation_matrix.columns)},
-            y: {list(correlation_matrix.index)},
+            z: {matrix_values},
+            x: {clean_columns},
+            y: {clean_rows},
             type: 'heatmap',
             colorscale: 'RdBu',
             reversescale: true,
@@ -107,4 +112,4 @@ html_content = f"""
 with open('index.html', 'w') as f:
     f.write(html_content)
 
-print("Web matrix successfully built!")
+print("Web matrix successfully built with clean serialization layers!")
