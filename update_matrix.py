@@ -20,37 +20,42 @@ tickers = {
 
 print("Fetching financial data from Yahoo Finance...")
 try:
-    # Fetch data and clean up columns smoothly
-    raw_data = yf.download(list(tickers.values()), start=start_date, end=end_date)
+    # We download using group_by='column' to isolate pricing rows easily
+    raw_data = yf.download(list(tickers.values()), start=start_date, end=end_date, group_by='column')
     
-    if raw_data.empty or 'Adj Close' not in raw_data:
+    if raw_data.empty:
         print("Error: Received an empty data response from the market API.")
         sys.exit(1)
         
-    asset_data = raw_data['Adj Close']
+    # Modern yfinance returns unified 'Close'. If not found, fall back to 'Adj Close'.
+    if 'Close' in raw_data:
+        asset_data = raw_data['Close']
+    elif 'Adj Close' in raw_data:
+        asset_data = raw_data['Adj Close']
+    else:
+        print("Error: Could not locate a valid pricing index column tier.")
+        sys.exit(1)
     
-    # Map the columns backward correctly to their clean names
+    # Map the ticker symbols back to human-readable names
     inv_tickers = {v: k for k, v in tickers.items()}
     asset_data = asset_data.rename(columns=inv_tickers)
     
-    # Forward fill gaps (like weekends for stocks while crypto stays open)
+    # Forward fill gaps (ensures stock data aligns with 24/7 crypto data)
     asset_data = asset_data.ffill().dropna()
 
-    if len(asset_data) < 65:
-        print("Error: Not enough data historical entries gathered to compute a matrix.")
-        sys.exit(1)
+    print(f"Successfully processed {len(asset_data)} entries.")
 
 except Exception as e:
     print(f"Data ingestion error: {e}")
     sys.exit(1)
 
-# 3. Calculate Daily Returns securely
+# 2. Calculate Daily Returns
 returns_df = asset_data.pct_change().dropna()
 
-# 4. Generate 60-Day Rolling Correlation Matrix
+# 3. Generate 60-Day Rolling Correlation Matrix
 correlation_matrix = returns_df.tail(60).corr().fillna(0)
 
-# 5. Build HTML Visual Matrix Page
+# 4. Build HTML Visual Matrix Page
 html_content = f"""
 <!DOCTYPE html>
 <html>
