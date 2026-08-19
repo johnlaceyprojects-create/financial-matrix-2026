@@ -19,55 +19,46 @@ tickers = {
     'Real Estate (VNQ REIT)': 'VNQ'
 }
 
-print("Fetching financial data from Yahoo Finance...")
-try:
-    # Disable multi-level layers for a completely flat data grid
-    asset_data = yf.download(
-        tickers=list(tickers.values()), 
-        start=start_date, 
-        end=end_date, 
-        multi_level_index=False
-    )
-    
-    if asset_data.empty:
-        print("Error: Received an empty data response from the market API.")
-        sys.exit(1)
+print("Fetching financial data sequentially to guarantee a single-level dataframe...")
+price_series = {}
+
+# Download assets individually to block MultiIndex column grouping entirely
+for label, symbol in tickers.items():
+    try:
+        print(f"Downloading {label} ({symbol})...")
+        single_data = yf.download(symbol, start=start_date, end=end_date, verbose=False)
         
-    # Standardise column headers to lowercase to avoid case-matching errors
-    asset_data.columns = [str(c).lower() for c in asset_data.columns]
-    
-    # Isolate closing price columns matching our target ticker symbols
-    valid_cols = []
-    for clean_name, symbol in tickers.items():
-        sym_lower = symbol.lower()
-        # Find any column header that contains our ticker symbol string
-        matched_col = next((c for c in asset_data.columns if sym_lower in c), None)
-        if matched_col:
-            asset_data = asset_data.rename(columns={matched_col: clean_name})
-            valid_cols.append(clean_name)
-            
-    # Filter the dataframe to hold only our renamed valid asset classes
-    asset_data = asset_data[valid_cols]
-    
-    # Forward fill gaps (aligns stock market weekend closures with 24/7 crypto)
-    asset_data = asset_data.ffill().dropna()
+        if not single_data.empty:
+            # Safely capture the Close price series as a flat array
+            if 'Close' in single_data.columns:
+                price_series[label] = single_data['Close']
+            elif 'Adj Close' in single_data.columns:
+                price_series[label] = single_data['Adj Close']
+                
+    except Exception as e:
+        print(f"Warning: Skipped tracking {label} due to an access gap: {e}")
 
-    print(f"Successfully processed {len(asset_data)} rows across {len(asset_data.columns)} assets.")
-
-except Exception as e:
-    print(f"Data processing error: {e}")
+if not price_series:
+    print("Error: Could not retrieve a single asset series from the market network.")
     sys.exit(1)
 
-# 2. Calculate Daily Returns
+# Combine the individual asset series into a completely flat database layout
+asset_data = pd.DataFrame(price_series)
+
+# Forward fill gaps (bridges global market weekend closures with 24/7 crypto timelines)
+asset_data = asset_data.ffill().dropna()
+print(f"Successfully processed {len(asset_data)} uniform rows across {len(asset_data.columns)} assets.")
+
+# 2. Calculate Daily Percentage Returns
 returns_df = asset_data.pct_change().dropna()
 
-# 3. Generate 60-Day Rolling Correlation Matrix
+# 3. Generate a 60-Day Rolling Pearson Correlation Matrix
 correlation_matrix = returns_df.tail(60).corr().fillna(0)
 
-# Securely serialize the arrays via JSON to prevent raw python strings breaking HTML
-matrix_values = json.dumps(correlation_matrix.values.tolist())
-clean_columns = json.dumps(list(correlation_matrix.columns))
-clean_rows = json.dumps(list(correlation_matrix.index))
+# Clean out DataFrame structural metadata to prevent layout injection errors
+matrix_values = [list(map(float, row)) for row in correlation_matrix.values]
+clean_columns = [str(col) for col in correlation_matrix.columns]
+clean_rows = [str(index) for index in correlation_matrix.index]
 
 # 4. Build HTML Visual Matrix Page
 html_content = f"""
@@ -94,9 +85,9 @@ html_content = f"""
 
     <script>
         var data = [{{
-            z: {matrix_values},
-            x: {clean_columns},
-            y: {clean_rows},
+            z: {json.dumps(matrix_values)},
+            x: {json.dumps(clean_columns)},
+            y: {json.dumps(clean_rows)},
             type: 'heatmap',
             colorscale: 'RdBu',
             reversescale: true,
@@ -108,7 +99,7 @@ html_content = f"""
             paper_bgcolor: '#1e1e1e',
             plot_bgcolor: '#1e1e1e',
             font: {{ color: '#ffffff' }},
-            margin: {{ l: 150, r: 50, b: 100, t: 30 }},
+            margin: {{ l: 160, r: 40, b: 100, t: 30 }},
             xaxis: {{ tickangle: -45 }}
         }};
 
@@ -121,4 +112,4 @@ html_content = f"""
 with open('index.html', 'w') as f:
     f.write(html_content)
 
-print("Web matrix successfully built!")
+print("Web matrix successfully built with verified single-tier parsing layouts!")
