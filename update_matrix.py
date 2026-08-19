@@ -2,6 +2,7 @@ import pandas as pd
 import yfinance as yf
 import datetime
 import sys
+import json
 
 # 1. Define Timeframe (Last 2 years)
 end_date = datetime.date.today()
@@ -20,33 +21,45 @@ tickers = {
 
 print("Fetching financial data from Yahoo Finance...")
 try:
-    # We download using group_by='column' to isolate pricing rows easily
-    raw_data = yf.download(list(tickers.values()), start=start_date, end=end_date, group_by='column')
+    # Explicitly disable multi-level index layers for a flat data layout
+    asset_data = yf.download(
+        tickers=list(tickers.values()), 
+        start=start_date, 
+        end=end_date, 
+        multi_level_index=False
+    )
     
-    if raw_data.empty:
+    if asset_data.empty:
         print("Error: Received an empty data response from the market API.")
         sys.exit(1)
         
-    # Modern yfinance returns unified 'Close'. If not found, fall back to 'Adj Close'.
-    if 'Close' in raw_data:
-        asset_data = raw_data['Close']
-    elif 'Adj Close' in raw_data:
-        asset_data = raw_data['Adj Close']
-    else:
-        print("Error: Could not locate a valid pricing index column tier.")
-        sys.exit(1)
+    # Isolate strictly the Closing columns from the flat DataFrame
+    valid_cols = [c for c in asset_data.columns if 'Close' in c or any(t in c for t in tickers.values())]
+    asset_data = asset_data[valid_cols]
     
-    # Map the ticker symbols back to human-readable names
+    # Strip any text decorators out of the flat column names to isolate pure symbols
+    clean_cols = {}
+    for col in asset_data.columns:
+        # Match symbol inside column headers if yfinance appends text strings
+        found_symbol = next((v for v in tickers.values() if v in col), col)
+        clean_cols[col] = found_symbol
+        
+    asset_data = asset_data.rename(columns=clean_cols)
+    
+    # Map the isolated symbols back to human-readable names
     inv_tickers = {v: k for k, v in tickers.items()}
     asset_data = asset_data.rename(columns=inv_tickers)
     
-    # Forward fill gaps (ensures stock data aligns with 24/7 crypto data)
+    # Drop columns that failed mapping to keep only requested assets
+    asset_data = asset_data[[k for k in tickers.keys() if k in asset_data.columns]]
+    
+    # Forward fill gaps (aligns stock market closures with 24/7 crypto data)
     asset_data = asset_data.ffill().dropna()
 
-    print(f"Successfully processed {len(asset_data)} entries.")
+    print(f"Successfully processed {len(asset_data)} rows across {len(asset_data.columns)} assets.")
 
 except Exception as e:
-    print(f"Data ingestion error: {e}")
+    print(f"Data processing error: {e}")
     sys.exit(1)
 
 # 2. Calculate Daily Returns
@@ -55,10 +68,10 @@ returns_df = asset_data.pct_change().dropna()
 # 3. Generate 60-Day Rolling Correlation Matrix
 correlation_matrix = returns_df.tail(60).corr().fillna(0)
 
-# Convert metadata safely into standard clean Python arrays for JavaScript injection
-matrix_values = correlation_matrix.values.tolist()
-clean_columns = list(correlation_matrix.columns.tolist())
-clean_rows = list(correlation_matrix.index.tolist())
+# Securely serialize the arrays via JSON to prevent raw python strings breaking HTML
+matrix_values = json.dumps(correlation_matrix.values.tolist())
+clean_columns = json.dumps(list(correlation_matrix.columns))
+clean_rows = json.dumps(list(correlation_matrix.index))
 
 # 4. Build HTML Visual Matrix Page
 html_content = f"""
@@ -112,4 +125,4 @@ html_content = f"""
 with open('index.html', 'w') as f:
     f.write(html_content)
 
-print("Web matrix successfully built with clean serialization layers!")
+print("Web matrix successfully built!")
